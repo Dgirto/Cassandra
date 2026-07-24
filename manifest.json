@@ -1,0 +1,76 @@
+{
+  "id": "cassandra",
+  "name": "Cassandra",
+  "name_en": "Cassandra",
+  "version": "1.0.0",
+  "description": "Consulta de solo lectura en Apache Cassandra: listar keyspaces y tablas, leer filas con límite y ejecutar CQL de lectura",
+  "description_en": "Read-only querying in Apache Cassandra: list keyspaces and tables, read rows with a limit and run read-only CQL",
+  "icon": "icon.svg",
+  "category": "database",
+  "category_en": "database",
+  "keywords": ["cassandra", "apache cassandra", "cql", "base de datos", "database", "solo lectura", "read-only", "nosql"],
+  "library": {
+    "package": "ruvic-cassandra-connector",
+    "install": "pip install git+https://github.com/Dgirto/Cassandra.git#subdirectory=lib",
+    "import_name": "ruvic_cassandra_connector"
+  },
+  "auth_modes": [
+    {
+      "id": "user_password",
+      "label": "Usuario y contraseña",
+      "fields": [
+        {
+          "key": "hosts",
+          "label": "Hosts (contact points)",
+          "type": "text",
+          "required": true,
+          "placeholder": "10.0.0.1,10.0.0.2",
+          "help_text": "Uno o más nodos separados por coma"
+        },
+        {
+          "key": "port",
+          "label": "Puerto",
+          "type": "number",
+          "required": true,
+          "default": "9042"
+        },
+        {
+          "key": "username",
+          "label": "Usuario",
+          "type": "text",
+          "required": true,
+          "help_text": "Se recomienda un rol con permiso SELECT únicamente"
+        },
+        {
+          "key": "password",
+          "label": "Contraseña",
+          "type": "password",
+          "secret": true,
+          "required": true
+        },
+        {
+          "key": "local_datacenter",
+          "label": "Datacenter local",
+          "type": "text",
+          "required": true,
+          "placeholder": "datacenter1",
+          "help_text": "Nombre del datacenter local requerido por el driver (ver nodetool status)"
+        },
+        {
+          "key": "connect_timeout",
+          "label": "Timeout de conexión (segundos)",
+          "type": "number",
+          "required": false,
+          "default": "10"
+        }
+      ]
+    }
+  ],
+  "env_prefix": "RUVIC_CASSANDRA_",
+  "operations": ["db.list_keyspaces_and_tables", "db.read_rows", "db.execute_cql"],
+  "test_connection": true,
+  "docs": {
+    "skill": "SKILL.md",
+    "permissions_note": "El usuario necesita permiso SELECT sobre los keyspaces/tablas a consultar (rol dedicado con GRANT SELECT ON KEYSPACE ... TO usuario). No se requieren permisos de escritura (MODIFY) ni de administración (CREATE, ALTER, DROP)."
+  }
+}
