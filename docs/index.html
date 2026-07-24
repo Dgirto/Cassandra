@@ -1,0 +1,522 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title data-i18n="doc_title">Conector Cassandra — Ruvic</title>
+  <link rel="stylesheet" href="assets/ruvic.css">
+</head>
+<body>
+  <main class="ruvic-container">
+    <nav class="ruvic-toc" aria-label="Índice">
+      <h2 data-i18n="toc_title">Contenido</h2>
+      <ol>
+        <li><a href="#que-es" data-i18n="toc.que_es">¿Qué es y para qué sirve?</a></li>
+        <li><a href="#prerrequisitos" data-i18n="toc.prerrequisitos">Prerrequisitos</a></li>
+        <li><a href="#configuracion-fabricante" data-i18n="toc.configuracion_fabricante">Configuración en el fabricante</a></li>
+        <li><a href="#permisos" data-i18n="toc.permisos">Permisos requeridos</a></li>
+        <li><a href="#configuracion-ruvic" data-i18n="toc.configuracion_ruvic">Configuración en Ruvic</a></li>
+        <li><a href="#verificacion" data-i18n="toc.verificacion">Verificación</a></li>
+        <li><a href="#solucion-problemas" data-i18n="toc.solucion_problemas">Solución de problemas</a></li>
+        <li><a href="#faq-seguridad" data-i18n="toc.faq_seguridad">Preguntas frecuentes y notas de seguridad</a></li>
+      </ol>
+    </nav>
+
+    <h1 data-i18n="guide_title">Conector Cassandra — Guía de configuración</h1>
+    <p class="guide-updated">{{ULTIMA_ACTUALIZACION}}</p>
+
+    <section>
+      <h2 id="que-es" data-i18n="section.que_es">¿Qué es y para qué sirve?</h2>
+      <p data-i18n="section.que_es.body">El conector Cassandra permite que el agente de Ruvic consulte tu clúster Apache Cassandra en modo solo lectura: puede explorar y leer datos, pero nunca modificarlos. Una vez configurado, puedes pedirle al agente cosas como:</p>
+      <ul>
+        <li data-i18n="section.que_es.example1">"Lista los keyspaces y tablas del clúster de Cassandra."</li>
+        <li data-i18n="section.que_es.example2">"Muéstrame las últimas 50 filas de la tabla pedidos del keyspace ventas."</li>
+        <li data-i18n="section.que_es.example3">"¿Cuántos pedidos tiene el cliente ACME? Ejecuta un SELECT para averiguarlo."</li>
+      </ul>
+      <p data-i18n="section.que_es.ops_intro">Operaciones soportadas:</p>
+      <table>
+        <thead>
+          <tr>
+            <th data-i18n="table.operacion">Operación</th>
+            <th data-i18n="table.que_hace">Qué hace</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>db.list_keyspaces_and_tables</code></td>
+            <td data-i18n="section.que_es.op1">Lista los keyspaces del clúster y las tablas de cada uno (excluye keyspaces internos del sistema por defecto)</td>
+          </tr>
+          <tr>
+            <td><code>db.read_rows</code></td>
+            <td data-i18n="section.que_es.op2">Lee filas de una tabla con un límite (default 100, máximo 1000)</td>
+          </tr>
+          <tr>
+            <td><code>db.execute_cql</code></td>
+            <td data-i18n="section.que_es.op3">Ejecuta una sentencia CQL de solo lectura (SELECT); cualquier otra sentencia se rechaza antes de llegar a Cassandra</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div class="callout callout-info">
+        <span class="callout-title" data-i18n="section.que_es.callout_title">Solo lectura, por diseño</span>
+        <span data-i18n="section.que_es.callout_body">El conector valida a nivel de código que toda sentencia CQL empiece con SELECT; INSERT, UPDATE, DELETE, CREATE, DROP, ALTER y TRUNCATE se rechazan antes de ejecutarse, sin importar el rol otorgado al usuario en Cassandra.</span>
+      </div>
+    </section>
+
+    <section>
+      <h2 id="prerrequisitos" data-i18n="section.prerrequisitos">Prerrequisitos</h2>
+      <ul>
+        <li data-i18n="section.prerrequisitos.item1">Un clúster <strong>Apache Cassandra</strong> (autoalojado, en la nube o en Docker) con autenticación habilitada (<code>PasswordAuthenticator</code>).</li>
+        <li data-i18n="section.prerrequisitos.item2">Acceso administrativo al clúster (usuario con permiso para crear roles vía <code>cqlsh</code>), solo durante la configuración inicial.</li>
+        <li data-i18n="section.prerrequisitos.item3"><strong>Acceso de red</strong> desde la plataforma Ruvic al clúster (nodos de contacto y puerto alcanzables; regla de firewall o security group si aplica).</li>
+        <li data-i18n="section.prerrequisitos.item4">Los datos de conexión: nodos de contacto (hosts), puerto (por defecto <code>9042</code>) y el nombre del datacenter local (ver <code>nodetool status</code>).</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2 id="configuracion-fabricante" data-i18n="section.configuracion_fabricante">Configuración en el fabricante</h2>
+      <p data-i18n="section.configuracion_fabricante.intro">Vas a crear un <strong>rol dedicado de solo lectura</strong> para Ruvic. No reutilices el rol <code>cassandra</code> ni un rol de aplicación: un rol dedicado permite auditar la actividad del agente y limitar el acceso al mínimo.</p>
+
+      <ol class="ruvic-steps">
+        <li>
+          <strong data-i18n="step.1.label">Conéctate al clúster como administrador.</strong>
+          <span data-i18n="step.1.body">Usa cqlsh con un rol administrador (por ejemplo el rol superuser inicial cassandra/cassandra):</span>
+<pre><code>cqlsh TU_HOST 9042 -u cassandra -p CONTRASEÑA_ADMIN</code></pre>
+        </li>
+
+        <li>
+          <strong data-i18n="step.2.label">Crea el rol de solo lectura para Ruvic.</strong>
+          <span data-i18n="step.2.body">Elige una contraseña fuerte (mínimo 16 caracteres, generada aleatoriamente) y guárdala: la usarás en el formulario de Ruvic (campo Contraseña).</span>
+<pre><code>CREATE ROLE ruvic_reader WITH PASSWORD = 'CAMBIA_ESTA_CONTRASEÑA' AND LOGIN = true;</code></pre>
+        </li>
+
+        <li>
+          <strong data-i18n="step.3.label">Otorga permiso SELECT sobre los keyspaces a exponer.</strong>
+          <span data-i18n="step.3.body">Otorga sobre keyspaces específicos en vez de todo el clúster cuando sea posible (repite para cada keyspace que el agente deba consultar):</span>
+<pre><code>GRANT SELECT ON KEYSPACE ventas TO ruvic_reader;</code></pre>
+          <div class="callout callout-info">
+            <span class="callout-title" data-i18n="step.3.note_title">Nota</span>
+            <span data-i18n="step.3.note_body">Listar keyspaces y tablas (db.list_keyspaces_and_tables) usa las tablas del sistema system_schema, legibles por cualquier rol autenticado; no necesitas un GRANT adicional para esa operación.</span>
+          </div>
+        </li>
+
+        <li>
+          <strong data-i18n="step.4.label">Habilita el acceso de red desde Ruvic.</strong>
+          <span data-i18n="step.4.body">Si tu clúster restringe conexiones por IP (habitual en producción), permite la IP de la plataforma Ruvic:</span>
+          <ul>
+            <li data-i18n="step.4.item1"><strong>Servidor propio</strong>: abre el puerto 9042 (o el configurado) en el firewall del nodo hacia la IP de Ruvic.</li>
+            <li data-i18n="step.4.item2"><strong>Cloud gestionado (Astra DB, AWS/GCP/Azure)</strong>: agrega la IP en el security group, la lista de acceso o el allowlist del proveedor.</li>
+          </ul>
+          <div class="screenshot-placeholder" data-i18n="step.4.screenshot">[ Captura: regla de firewall / security group con la IP de Ruvic — reemplazar por assets/img/cassandra-firewall.png ]</div>
+        </li>
+
+        <li>
+          <strong data-i18n="step.5.label">Verifica el rol desde fuera del servidor.</strong>
+          <span data-i18n="step.5.body">Desde una máquina distinta al nodo de Cassandra (idealmente con salida de red similar a la de Ruvic):</span>
+<pre><code>cqlsh TU_HOST 9042 -u ruvic_reader -p TU_CONTRASEÑA -e "SELECT release_version FROM system.local"</code></pre>
+          <p data-i18n="step.5.result">Si responde con la versión del clúster, el fabricante quedó listo. Anota estos valores para la siguiente sección: hosts, puerto, usuario, contraseña y datacenter local.</p>
+        </li>
+      </ol>
+    </section>
+
+    <section>
+      <h2 id="permisos" data-i18n="section.permisos">Permisos requeridos</h2>
+      <p data-i18n="section.permisos.intro">Principio de mínimo privilegio: el rol de Ruvic solo necesita SELECT sobre los keyspaces a consultar. No otorgues permisos de escritura (MODIFY) ni de administración (CREATE, ALTER, DROP, AUTHORIZE).</p>
+
+      <table>
+        <thead>
+          <tr>
+            <th data-i18n="table.permiso">Permiso</th>
+            <th data-i18n="table.para_que">Para qué sirve</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>LOGIN</code></td>
+            <td data-i18n="permisos.login">Permite que el rol se autentique en el clúster</td>
+          </tr>
+          <tr>
+            <td><code>SELECT</code> <span data-i18n="permisos.select_scope">(por keyspace)</span></td>
+            <td data-i18n="permisos.select">Leer filas de tablas (db.read_rows) y ejecutar CQL de lectura (db.execute_cql) sobre los keyspaces expuestos</td>
+          </tr>
+          <tr>
+            <td><span data-i18n="permisos.system_schema_label">Lectura de <code>system_schema</code></span></td>
+            <td data-i18n="permisos.system_schema">Listar keyspaces y tablas (db.list_keyspaces_and_tables); disponible para cualquier rol autenticado sin GRANT adicional</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <p data-i18n="section.permisos.no_needed">No se requieren permisos de escritura (<code>MODIFY</code>) ni de administración (<code>CREATE</code>, <code>ALTER</code>, <code>DROP</code>, <code>AUTHORIZE</code>). El conector rechaza a nivel de código cualquier sentencia CQL que no empiece con SELECT, aunque el rol otorgado tuviera esos permisos.</p>
+    </section>
+
+    <section>
+      <h2 id="configuracion-ruvic" data-i18n="section.configuracion_ruvic">Configuración en Ruvic</h2>
+      <p data-i18n="section.configuracion_ruvic.intro">Entra a <strong>Settings → Conectores</strong>, busca la tarjeta <strong>Cassandra</strong> y pulsa <strong>Configurar</strong>. Diligencia el formulario (modo de autenticación "Usuario y contraseña") con los valores que obtuviste en la sección anterior:</p>
+
+      <table>
+        <thead>
+          <tr>
+            <th data-i18n="table.campo">Campo del formulario</th>
+            <th data-i18n="table.valor">Valor</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td data-i18n="ruvic.hosts_label">Hosts (contact points)</td>
+            <td data-i18n="ruvic.hosts_value">Uno o más nodos de contacto separados por coma (ej. <code>10.0.0.1,10.0.0.2</code>)</td>
+          </tr>
+          <tr>
+            <td data-i18n="ruvic.puerto_label">Puerto</td>
+            <td data-i18n="ruvic.puerto_value"><code>9042</code> (salvo configuración distinta)</td>
+          </tr>
+          <tr>
+            <td data-i18n="ruvic.usuario_label">Usuario</td>
+            <td><code>ruvic_reader</code></td>
+          </tr>
+          <tr>
+            <td data-i18n="ruvic.password_label">Contraseña</td>
+            <td data-i18n="ruvic.password_value">La contraseña del paso 2. Se guarda cifrada como secreto: la interfaz no volverá a mostrarla</td>
+          </tr>
+          <tr>
+            <td data-i18n="ruvic.dc_label">Datacenter local</td>
+            <td data-i18n="ruvic.dc_value">Nombre exacto del datacenter local (ej. <code>datacenter1</code>), requerido por el driver — consulta <code>nodetool status</code> si no lo conoces</td>
+          </tr>
+          <tr>
+            <td data-i18n="ruvic.timeout_label">Timeout de conexión</td>
+            <td data-i18n="ruvic.timeout_value">Opcional; <code>10</code> segundos por defecto</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <p data-i18n="section.configuracion_ruvic.save"><span class="ruvic-button">Probar conexión</span> — la plataforma se conectará al clúster y confirmará que las credenciales, el datacenter y la red funcionan.</p>
+
+      <div class="screenshot-placeholder" data-i18n="section.configuracion_ruvic.screenshot">[ Captura: formulario del conector Cassandra en Settings → Conectores — reemplazar por assets/img/cassandra-form.png ]</div>
+    </section>
+
+    <section>
+      <h2 id="verificacion" data-i18n="section.verificacion">Verificación</h2>
+
+      <ol class="ruvic-steps">
+        <li>
+          <strong data-i18n="verif.1.label">Test de conexión exitoso.</strong>
+          <p data-i18n="verif.1.body">El botón <em>Probar conexión</em> ejecuta <code>test_connection()</code>, que hace ping al clúster con <code>SELECT release_version FROM system.local</code>. Debe responder: <em>"Conexión exitosa a Cassandra [hosts]"</em>. La tarjeta del conector cambia a estado <strong>Configurado</strong>.</p>
+        </li>
+        <li>
+          <strong data-i18n="verif.2.label">Automatización mínima de prueba.</strong>
+          <p data-i18n="verif.2.body">Abre una conversación nueva con el agente y pídele:</p>
+          <blockquote data-i18n="verif.2.prompt">"Lista los keyspaces y tablas del clúster de Cassandra."</blockquote>
+          <p data-i18n="verif.2.result">El agente debe responder con el listado real de tus keyspaces y tablas (usando db.list_keyspaces_and_tables). Si lo hace, el conector quedó operativo de punta a punta.</p>
+        </li>
+      </ol>
+    </section>
+
+    <section>
+      <h2 id="solucion-problemas" data-i18n="section.solucion_problemas">Solución de problemas</h2>
+
+      <table>
+        <thead>
+          <tr>
+            <th data-i18n="table.mensaje">Mensaje / síntoma</th>
+            <th data-i18n="table.causa">Causa probable y solución</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td data-i18n="trouble.1.msg">"Autenticación fallida: Credenciales inválidas o sin permiso suficiente sobre el clúster."</td>
+            <td data-i18n="trouble.1.fix">Usuario o contraseña incorrectos, o el rol no tiene LOGIN habilitado. Verifica el rol con cqlsh (paso 5 de "Configuración en el fabricante") y vuelve a guardar el formulario con la contraseña correcta.</td>
+          </tr>
+          <tr>
+            <td data-i18n="trouble.2.msg">"No se pudo alcanzar ningún nodo de [hosts]. Revisa host/puerto/red y el datacenter local configurado." / "Timeout al conectar con el clúster Cassandra."</td>
+            <td data-i18n="trouble.2.fix">La plataforma no alcanza los nodos de contacto. Revisa el firewall/security group (paso 4), que el host no sea <code>localhost</code> (debe ser accesible desde Ruvic, no desde tu equipo) y que el puerto 9042 esté abierto.</td>
+          </tr>
+          <tr>
+            <td data-i18n="trouble.3.msg">El agente lista tablas pero falla al leer una con "Error de datos" / permiso denegado</td>
+            <td data-i18n="trouble.3.fix">Falta el <code>GRANT SELECT</code> sobre ese keyspace. Repite el paso 3 de "Configuración en el fabricante" para el keyspace correspondiente.</td>
+          </tr>
+          <tr>
+            <td data-i18n="trouble.4.msg">"El datacenter local configurado no coincide" o errores de <code>DCAwareRoundRobinPolicy</code></td>
+            <td data-i18n="trouble.4.fix">El campo "Datacenter local" no coincide con el nombre real del clúster. Ejecuta <code>nodetool status</code> en un nodo y usa exactamente el nombre que aparece ahí, incluso si el clúster tiene un solo datacenter.</td>
+          </tr>
+          <tr>
+            <td data-i18n="trouble.5.msg">El conector aparece "Sin configurar" tras guardar</td>
+            <td data-i18n="trouble.5.fix">Algún campo obligatorio quedó vacío. Ábrelo de nuevo y completa hosts, puerto, usuario, contraseña y datacenter local (todos obligatorios salvo timeout).</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2 id="faq-seguridad" data-i18n="section.faq_seguridad">Preguntas frecuentes y notas de seguridad</h2>
+
+      <h3 data-i18n="faq.1.q">¿El agente puede modificar o borrar datos?</h3>
+      <p data-i18n="faq.1.a">No. El conector valida en código que toda sentencia CQL empiece con SELECT (INSERT, UPDATE, DELETE, CREATE, DROP, ALTER y TRUNCATE se rechazan antes de llegar a Cassandra), y el rol <code>ruvic_reader</code> solo tiene permiso <code>SELECT</code>. Son dos barreras independientes.</p>
+
+      <h3 data-i18n="faq.2.q">¿Dónde queda guardada la contraseña?</h3>
+      <p data-i18n="faq.2.a">Como secreto en el almacén de credenciales de la plataforma, asociado a tu usuario. La interfaz nunca vuelve a mostrarla; solo indica "definida". Para cambiarla, escribe una nueva en el formulario; para conservarla al editar otros campos, deja el campo vacío. El código del agente nunca hardcodea la contraseña: siempre se lee de la variable de entorno <code>RUVIC_CASSANDRA_PASSWORD</code>.</p>
+
+      <h3 data-i18n="faq.3.q">Rotación de credenciales</h3>
+      <p data-i18n="faq.3.a">Recomendado cada 90 días o según tu política: cambia la contraseña en Cassandra (<code>ALTER ROLE ruvic_reader WITH PASSWORD = '...'</code>), actualízala en el formulario del conector y pulsa <em>Probar conexión</em>.</p>
+
+      <h3 data-i18n="faq.4.q">¿Qué hago si la contraseña se compromete?</h3>
+      <ol>
+        <li data-i18n="faq.4.a1">Cambia la contraseña en Cassandra de inmediato (<code>ALTER ROLE ruvic_reader WITH PASSWORD = '...'</code>) o desactiva el rol (<code>ALTER ROLE ruvic_reader WITH LOGIN = false</code>).</li>
+        <li data-i18n="faq.4.a2">Revisa la actividad reciente del rol en los logs de auditoría del clúster (si están habilitados).</li>
+        <li data-i18n="faq.4.a3">Actualiza la nueva contraseña en el formulario del conector.</li>
+      </ol>
+
+      <h3 data-i18n="faq.5.q">¿Por qué el mínimo privilegio importa tanto en un conector de solo lectura?</h3>
+      <p data-i18n="faq.5.a">Aunque el código bloquea escrituras, otorgar SELECT solo sobre los keyspaces que el agente realmente necesita limita qué datos puede ver si las credenciales se filtran. Evita otorgar SELECT sobre todo el clúster cuando baste con uno o dos keyspaces.</p>
+
+      <div class="callout callout-warning">
+        <span class="callout-title" data-i18n="faq.warning_title">Buenas prácticas</span>
+        <span data-i18n="faq.warning_body">Usa siempre un rol dedicado y de solo lectura (nunca el rol cassandra ni uno de aplicación); restringe el acceso de red por IP; otorga SELECT solo sobre los keyspaces que el agente necesita; y evita compartir la contraseña por canales no seguros.</span>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const I18N = {
+      es: {
+        doc_title: "Conector Cassandra — Ruvic",
+        toc_title: "Contenido",
+        "toc.que_es": "¿Qué es y para qué sirve?",
+        "toc.prerrequisitos": "Prerrequisitos",
+        "toc.configuracion_fabricante": "Configuración en el fabricante",
+        "toc.permisos": "Permisos requeridos",
+        "toc.configuracion_ruvic": "Configuración en Ruvic",
+        "toc.verificacion": "Verificación",
+        "toc.solucion_problemas": "Solución de problemas",
+        "toc.faq_seguridad": "Preguntas frecuentes y notas de seguridad",
+        guide_title: "Conector Cassandra — Guía de configuración",
+
+        "section.que_es": "¿Qué es y para qué sirve?",
+        "section.que_es.body": "El conector Cassandra permite que el agente de Ruvic consulte tu clúster Apache Cassandra en modo solo lectura: puede explorar y leer datos, pero nunca modificarlos. Una vez configurado, puedes pedirle al agente cosas como:",
+        "section.que_es.example1": "\"Lista los keyspaces y tablas del clúster de Cassandra.\"",
+        "section.que_es.example2": "\"Muéstrame las últimas 50 filas de la tabla pedidos del keyspace ventas.\"",
+        "section.que_es.example3": "\"¿Cuántos pedidos tiene el cliente ACME? Ejecuta un SELECT para averiguarlo.\"",
+        "section.que_es.ops_intro": "Operaciones soportadas:",
+        "table.operacion": "Operación",
+        "table.que_hace": "Qué hace",
+        "section.que_es.op1": "Lista los keyspaces del clúster y las tablas de cada uno (excluye keyspaces internos del sistema por defecto)",
+        "section.que_es.op2": "Lee filas de una tabla con un límite (default 100, máximo 1000)",
+        "section.que_es.op3": "Ejecuta una sentencia CQL de solo lectura (SELECT); cualquier otra sentencia se rechaza antes de llegar a Cassandra",
+        "section.que_es.callout_title": "Solo lectura, por diseño",
+        "section.que_es.callout_body": "El conector valida a nivel de código que toda sentencia CQL empiece con SELECT; INSERT, UPDATE, DELETE, CREATE, DROP, ALTER y TRUNCATE se rechazan antes de ejecutarse, sin importar el rol otorgado al usuario en Cassandra.",
+
+        "section.prerrequisitos": "Prerrequisitos",
+        "section.prerrequisitos.item1": "Un clúster <strong>Apache Cassandra</strong> (autoalojado, en la nube o en Docker) con autenticación habilitada (<code>PasswordAuthenticator</code>).",
+        "section.prerrequisitos.item2": "Acceso administrativo al clúster (usuario con permiso para crear roles vía <code>cqlsh</code>), solo durante la configuración inicial.",
+        "section.prerrequisitos.item3": "<strong>Acceso de red</strong> desde la plataforma Ruvic al clúster (nodos de contacto y puerto alcanzables; regla de firewall o security group si aplica).",
+        "section.prerrequisitos.item4": "Los datos de conexión: nodos de contacto (hosts), puerto (por defecto <code>9042</code>) y el nombre del datacenter local (ver <code>nodetool status</code>).",
+
+        "section.configuracion_fabricante": "Configuración en el fabricante",
+        "section.configuracion_fabricante.intro": "Vas a crear un <strong>rol dedicado de solo lectura</strong> para Ruvic. No reutilices el rol <code>cassandra</code> ni un rol de aplicación: un rol dedicado permite auditar la actividad del agente y limitar el acceso al mínimo.",
+        "step.1.label": "Conéctate al clúster como administrador.",
+        "step.1.body": "Usa cqlsh con un rol administrador (por ejemplo el rol superuser inicial cassandra/cassandra):",
+        "step.2.label": "Crea el rol de solo lectura para Ruvic.",
+        "step.2.body": "Elige una contraseña fuerte (mínimo 16 caracteres, generada aleatoriamente) y guárdala: la usarás en el formulario de Ruvic (campo Contraseña).",
+        "step.3.label": "Otorga permiso SELECT sobre los keyspaces a exponer.",
+        "step.3.body": "Otorga sobre keyspaces específicos en vez de todo el clúster cuando sea posible (repite para cada keyspace que el agente deba consultar):",
+        "step.3.note_title": "Nota",
+        "step.3.note_body": "Listar keyspaces y tablas (db.list_keyspaces_and_tables) usa las tablas del sistema system_schema, legibles por cualquier rol autenticado; no necesitas un GRANT adicional para esa operación.",
+        "step.4.label": "Habilita el acceso de red desde Ruvic.",
+        "step.4.body": "Si tu clúster restringe conexiones por IP (habitual en producción), permite la IP de la plataforma Ruvic:",
+        "step.4.item1": "<strong>Servidor propio</strong>: abre el puerto 9042 (o el configurado) en el firewall del nodo hacia la IP de Ruvic.",
+        "step.4.item2": "<strong>Cloud gestionado (Astra DB, AWS/GCP/Azure)</strong>: agrega la IP en el security group, la lista de acceso o el allowlist del proveedor.",
+        "step.4.screenshot": "[ Captura: regla de firewall / security group con la IP de Ruvic — reemplazar por assets/img/cassandra-firewall.png ]",
+        "step.5.label": "Verifica el rol desde fuera del servidor.",
+        "step.5.body": "Desde una máquina distinta al nodo de Cassandra (idealmente con salida de red similar a la de Ruvic):",
+        "step.5.result": "Si responde con la versión del clúster, el fabricante quedó listo. Anota estos valores para la siguiente sección: hosts, puerto, usuario, contraseña y datacenter local.",
+
+        "section.permisos": "Permisos requeridos",
+        "section.permisos.intro": "Principio de mínimo privilegio: el rol de Ruvic solo necesita SELECT sobre los keyspaces a consultar. No otorgues permisos de escritura (MODIFY) ni de administración (CREATE, ALTER, DROP, AUTHORIZE).",
+        "table.permiso": "Permiso",
+        "table.para_que": "Para qué sirve",
+        "permisos.login": "Permite que el rol se autentique en el clúster",
+        "permisos.select_scope": "(por keyspace)",
+        "permisos.select": "Leer filas de tablas (db.read_rows) y ejecutar CQL de lectura (db.execute_cql) sobre los keyspaces expuestos",
+        "permisos.system_schema_label": "Lectura de <code>system_schema</code>",
+        "permisos.system_schema": "Listar keyspaces y tablas (db.list_keyspaces_and_tables); disponible para cualquier rol autenticado sin GRANT adicional",
+        "section.permisos.no_needed": "No se requieren permisos de escritura (<code>MODIFY</code>) ni de administración (<code>CREATE</code>, <code>ALTER</code>, <code>DROP</code>, <code>AUTHORIZE</code>). El conector rechaza a nivel de código cualquier sentencia CQL que no empiece con SELECT, aunque el rol otorgado tuviera esos permisos.",
+
+        "section.configuracion_ruvic": "Configuración en Ruvic",
+        "section.configuracion_ruvic.intro": "Entra a <strong>Settings → Conectores</strong>, busca la tarjeta <strong>Cassandra</strong> y pulsa <strong>Configurar</strong>. Diligencia el formulario (modo de autenticación \"Usuario y contraseña\") con los valores que obtuviste en la sección anterior:",
+        "table.campo": "Campo del formulario",
+        "table.valor": "Valor",
+        "ruvic.hosts_label": "Hosts (contact points)",
+        "ruvic.hosts_value": "Uno o más nodos de contacto separados por coma (ej. <code>10.0.0.1,10.0.0.2</code>)",
+        "ruvic.puerto_label": "Puerto",
+        "ruvic.puerto_value": "<code>9042</code> (salvo configuración distinta)",
+        "ruvic.usuario_label": "Usuario",
+        "ruvic.password_label": "Contraseña",
+        "ruvic.password_value": "La contraseña del paso 2. Se guarda cifrada como secreto: la interfaz no volverá a mostrarla",
+        "ruvic.dc_label": "Datacenter local",
+        "ruvic.dc_value": "Nombre exacto del datacenter local (ej. <code>datacenter1</code>), requerido por el driver — consulta <code>nodetool status</code> si no lo conoces",
+        "ruvic.timeout_label": "Timeout de conexión",
+        "ruvic.timeout_value": "Opcional; <code>10</code> segundos por defecto",
+        "section.configuracion_ruvic.save": "<span class=\"ruvic-button\">Probar conexión</span> — la plataforma se conectará al clúster y confirmará que las credenciales, el datacenter y la red funcionan.",
+        "section.configuracion_ruvic.screenshot": "[ Captura: formulario del conector Cassandra en Settings → Conectores — reemplazar por assets/img/cassandra-form.png ]",
+
+        "section.verificacion": "Verificación",
+        "verif.1.label": "Test de conexión exitoso.",
+        "verif.1.body": "El botón <em>Probar conexión</em> ejecuta <code>test_connection()</code>, que hace ping al clúster con <code>SELECT release_version FROM system.local</code>. Debe responder: <em>\"Conexión exitosa a Cassandra [hosts]\"</em>. La tarjeta del conector cambia a estado <strong>Configurado</strong>.",
+        "verif.2.label": "Automatización mínima de prueba.",
+        "verif.2.body": "Abre una conversación nueva con el agente y pídele:",
+        "verif.2.prompt": "\"Lista los keyspaces y tablas del clúster de Cassandra.\"",
+        "verif.2.result": "El agente debe responder con el listado real de tus keyspaces y tablas (usando db.list_keyspaces_and_tables). Si lo hace, el conector quedó operativo de punta a punta.",
+
+        "section.solucion_problemas": "Solución de problemas",
+        "table.mensaje": "Mensaje / síntoma",
+        "table.causa": "Causa probable y solución",
+        "trouble.1.msg": "\"Autenticación fallida: Credenciales inválidas o sin permiso suficiente sobre el clúster.\"",
+        "trouble.1.fix": "Usuario o contraseña incorrectos, o el rol no tiene LOGIN habilitado. Verifica el rol con cqlsh (paso 5 de \"Configuración en el fabricante\") y vuelve a guardar el formulario con la contraseña correcta.",
+        "trouble.2.msg": "\"No se pudo alcanzar ningún nodo de [hosts]. Revisa host/puerto/red y el datacenter local configurado.\" / \"Timeout al conectar con el clúster Cassandra.\"",
+        "trouble.2.fix": "La plataforma no alcanza los nodos de contacto. Revisa el firewall/security group (paso 4), que el host no sea <code>localhost</code> (debe ser accesible desde Ruvic, no desde tu equipo) y que el puerto 9042 esté abierto.",
+        "trouble.3.msg": "El agente lista tablas pero falla al leer una con \"Error de datos\" / permiso denegado",
+        "trouble.3.fix": "Falta el <code>GRANT SELECT</code> sobre ese keyspace. Repite el paso 3 de \"Configuración en el fabricante\" para el keyspace correspondiente.",
+        "trouble.4.msg": "\"El datacenter local configurado no coincide\" o errores de <code>DCAwareRoundRobinPolicy</code>",
+        "trouble.4.fix": "El campo \"Datacenter local\" no coincide con el nombre real del clúster. Ejecuta <code>nodetool status</code> en un nodo y usa exactamente el nombre que aparece ahí, incluso si el clúster tiene un solo datacenter.",
+        "trouble.5.msg": "El conector aparece \"Sin configurar\" tras guardar",
+        "trouble.5.fix": "Algún campo obligatorio quedó vacío. Ábrelo de nuevo y completa hosts, puerto, usuario, contraseña y datacenter local (todos obligatorios salvo timeout).",
+
+        "section.faq_seguridad": "Preguntas frecuentes y notas de seguridad",
+        "faq.1.q": "¿El agente puede modificar o borrar datos?",
+        "faq.1.a": "No. El conector valida en código que toda sentencia CQL empiece con SELECT (INSERT, UPDATE, DELETE, CREATE, DROP, ALTER y TRUNCATE se rechazan antes de llegar a Cassandra), y el rol <code>ruvic_reader</code> solo tiene permiso <code>SELECT</code>. Son dos barreras independientes.",
+        "faq.2.q": "¿Dónde queda guardada la contraseña?",
+        "faq.2.a": "Como secreto en el almacén de credenciales de la plataforma, asociado a tu usuario. La interfaz nunca vuelve a mostrarla; solo indica \"definida\". Para cambiarla, escribe una nueva en el formulario; para conservarla al editar otros campos, deja el campo vacío. El código del agente nunca hardcodea la contraseña: siempre se lee de la variable de entorno <code>RUVIC_CASSANDRA_PASSWORD</code>.",
+        "faq.3.q": "Rotación de credenciales",
+        "faq.3.a": "Recomendado cada 90 días o según tu política: cambia la contraseña en Cassandra (<code>ALTER ROLE ruvic_reader WITH PASSWORD = '...'</code>), actualízala en el formulario del conector y pulsa <em>Probar conexión</em>.",
+        "faq.4.q": "¿Qué hago si la contraseña se compromete?",
+        "faq.4.a1": "Cambia la contraseña en Cassandra de inmediato (<code>ALTER ROLE ruvic_reader WITH PASSWORD = '...'</code>) o desactiva el rol (<code>ALTER ROLE ruvic_reader WITH LOGIN = false</code>).",
+        "faq.4.a2": "Revisa la actividad reciente del rol en los logs de auditoría del clúster (si están habilitados).",
+        "faq.4.a3": "Actualiza la nueva contraseña en el formulario del conector.",
+        "faq.5.q": "¿Por qué el mínimo privilegio importa tanto en un conector de solo lectura?",
+        "faq.5.a": "Aunque el código bloquea escrituras, otorgar SELECT solo sobre los keyspaces que el agente realmente necesita limita qué datos puede ver si las credenciales se filtran. Evita otorgar SELECT sobre todo el clúster cuando baste con uno o dos keyspaces.",
+        "faq.warning_title": "Buenas prácticas",
+        "faq.warning_body": "Usa siempre un rol dedicado y de solo lectura (nunca el rol cassandra ni uno de aplicación); restringe el acceso de red por IP; otorga SELECT solo sobre los keyspaces que el agente necesita; y evita compartir la contraseña por canales no seguros.",
+      },
+      en: {
+        doc_title: "Cassandra Connector — Ruvic",
+        toc_title: "Contents",
+        "toc.que_es": "What it is and what it's for",
+        "toc.prerrequisitos": "Prerequisites",
+        "toc.configuracion_fabricante": "Vendor / provider setup",
+        "toc.permisos": "Required permissions",
+        "toc.configuracion_ruvic": "Configuration in Ruvic",
+        "toc.verificacion": "Verification",
+        "toc.solucion_problemas": "Troubleshooting",
+        "toc.faq_seguridad": "FAQ and security notes",
+        guide_title: "Cassandra Connector — Setup Guide",
+
+        "section.que_es": "What it is and what it's for",
+        "section.que_es.body": "The Cassandra connector lets the Ruvic agent query your Apache Cassandra cluster in read-only mode: it can explore and read data, but never modify it. Once configured, you can ask the agent things like:",
+        "section.que_es.example1": "\"List the keyspaces and tables in the Cassandra cluster.\"",
+        "section.que_es.example2": "\"Show me the last 50 rows of the pedidos table in the ventas keyspace.\"",
+        "section.que_es.example3": "\"How many orders does customer ACME have? Run a SELECT to find out.\"",
+        "section.que_es.ops_intro": "Supported operations:",
+        "table.operacion": "Operation",
+        "table.que_hace": "What it does",
+        "section.que_es.op1": "Lists the cluster's keyspaces and each one's tables (excludes internal system keyspaces by default)",
+        "section.que_es.op2": "Reads rows from a table with a limit (default 100, max 1000)",
+        "section.que_es.op3": "Runs a read-only CQL statement (SELECT); any other statement is rejected before reaching Cassandra",
+        "section.que_es.callout_title": "Read-only by design",
+        "section.que_es.callout_body": "The connector validates in code that every CQL statement starts with SELECT; INSERT, UPDATE, DELETE, CREATE, DROP, ALTER and TRUNCATE are rejected before execution, regardless of the role granted to the user in Cassandra.",
+
+        "section.prerrequisitos": "Prerequisites",
+        "section.prerrequisitos.item1": "An <strong>Apache Cassandra</strong> cluster (self-hosted, cloud, or Docker) with authentication enabled (<code>PasswordAuthenticator</code>).",
+        "section.prerrequisitos.item2": "Administrative access to the cluster (a user who can create roles via <code>cqlsh</code>), only during initial setup.",
+        "section.prerrequisitos.item3": "<strong>Network access</strong> from the Ruvic platform to the cluster (reachable contact points and port; firewall rule or security group if applicable).",
+        "section.prerrequisitos.item4": "The connection details: contact points (hosts), port (default <code>9042</code>) and the local datacenter name (see <code>nodetool status</code>).",
+
+        "section.configuracion_fabricante": "Vendor / provider setup",
+        "section.configuracion_fabricante.intro": "You will create a <strong>dedicated read-only role</strong> for Ruvic. Do not reuse the <code>cassandra</code> role or an application role: a dedicated role lets you audit the agent's activity and keep access to a minimum.",
+        "step.1.label": "Connect to the cluster as an administrator.",
+        "step.1.body": "Use cqlsh with an administrator role (for example the initial superuser role cassandra/cassandra):",
+        "step.2.label": "Create the read-only role for Ruvic.",
+        "step.2.body": "Choose a strong password (16+ random characters) and save it: you will paste it into the Ruvic form (Password field).",
+        "step.3.label": "Grant SELECT on the keyspaces to expose.",
+        "step.3.body": "Grant on specific keyspaces instead of the whole cluster whenever possible (repeat for each keyspace the agent needs to query):",
+        "step.3.note_title": "Note",
+        "step.3.note_body": "Listing keyspaces and tables (db.list_keyspaces_and_tables) uses the system_schema system tables, readable by any authenticated role; no extra GRANT needed for that operation.",
+        "step.4.label": "Enable network access from Ruvic.",
+        "step.4.body": "If your cluster restricts connections by IP (common in production), allow the Ruvic platform IP:",
+        "step.4.item1": "<strong>Self-hosted</strong>: open port 9042 (or the configured one) in the node's firewall towards the Ruvic IP.",
+        "step.4.item2": "<strong>Managed cloud (Astra DB, AWS/GCP/Azure)</strong>: add the IP to the security group, access list, or provider allowlist.",
+        "step.4.screenshot": "[ Screenshot: firewall rule / security group with the Ruvic IP — replace with assets/img/cassandra-firewall.png ]",
+        "step.5.label": "Verify the role from outside the server.",
+        "step.5.body": "From a machine other than the Cassandra node (ideally with network egress similar to Ruvic's):",
+        "step.5.result": "If it returns the cluster version, the vendor side is ready. Write down these values for the next section: hosts, port, username, password and local datacenter.",
+
+        "section.permisos": "Required permissions",
+        "section.permisos.intro": "Least-privilege principle: the Ruvic role only needs SELECT on the keyspaces to query. Do not grant write (MODIFY) or admin (CREATE, ALTER, DROP, AUTHORIZE) permissions.",
+        "table.permiso": "Permission",
+        "table.para_que": "Why the connector needs it",
+        "permisos.login": "Lets the role authenticate to the cluster",
+        "permisos.select_scope": "(per keyspace)",
+        "permisos.select": "Read rows from tables (db.read_rows) and run read-only CQL (db.execute_cql) on the exposed keyspaces",
+        "permisos.system_schema_label": "Read access to <code>system_schema</code>",
+        "permisos.system_schema": "List keyspaces and tables (db.list_keyspaces_and_tables); available to any authenticated role with no extra GRANT",
+        "section.permisos.no_needed": "No write (<code>MODIFY</code>) or admin (<code>CREATE</code>, <code>ALTER</code>, <code>DROP</code>, <code>AUTHORIZE</code>) permissions are required. The connector rejects any CQL statement that does not start with SELECT at the code level, even if the granted role had those permissions.",
+
+        "section.configuracion_ruvic": "Configuration in Ruvic",
+        "section.configuracion_ruvic.intro": "Go to <strong>Settings → Connectors</strong>, find the <strong>Cassandra</strong> card and click <strong>Configure</strong>. Fill in the form (\"Username and password\" auth mode) with the values from the previous section:",
+        "table.campo": "Form field",
+        "table.valor": "Value",
+        "ruvic.hosts_label": "Hosts (contact points)",
+        "ruvic.hosts_value": "One or more contact nodes separated by commas (e.g. <code>10.0.0.1,10.0.0.2</code>)",
+        "ruvic.puerto_label": "Port",
+        "ruvic.puerto_value": "<code>9042</code> (unless configured otherwise)",
+        "ruvic.usuario_label": "Username",
+        "ruvic.password_label": "Password",
+        "ruvic.password_value": "The password from step 2. Stored as an encrypted secret: the UI will never display it again",
+        "ruvic.dc_label": "Local datacenter",
+        "ruvic.dc_value": "Exact local datacenter name (e.g. <code>datacenter1</code>), required by the driver — check <code>nodetool status</code> if you don't know it",
+        "ruvic.timeout_label": "Connection timeout",
+        "ruvic.timeout_value": "Optional; defaults to <code>10</code> seconds",
+        "section.configuracion_ruvic.save": "<span class=\"ruvic-button\">Test connection</span> — the platform will connect to the cluster and confirm credentials, datacenter and networking work.",
+        "section.configuracion_ruvic.screenshot": "[ Screenshot: Cassandra connector form in Settings → Connectors — replace with assets/img/cassandra-form.png ]",
+
+        "section.verificacion": "Verification",
+        "verif.1.label": "Successful connection test.",
+        "verif.1.body": "The <em>Test connection</em> button runs <code>test_connection()</code>, which pings the cluster with <code>SELECT release_version FROM system.local</code>. It should return: <em>\"Successful connection to Cassandra [hosts]\"</em>. The connector card switches to <strong>Configured</strong>.",
+        "verif.2.label": "Minimal test automation.",
+        "verif.2.body": "Open a new conversation with the agent and ask:",
+        "verif.2.prompt": "\"List the keyspaces and tables in the Cassandra cluster.\"",
+        "verif.2.result": "The agent should reply with your actual keyspaces and tables (using db.list_keyspaces_and_tables). If it does, the connector is fully operational.",
+
+        "section.solucion_problemas": "Troubleshooting",
+        "table.mensaje": "Message / symptom",
+        "table.causa": "Likely cause and fix",
+        "trouble.1.msg": "\"Authentication failed: Invalid credentials or insufficient permission on the cluster.\"",
+        "trouble.1.fix": "Wrong username or password, or the role does not have LOGIN enabled. Verify the role with cqlsh (step 5 of \"Vendor / provider setup\") and re-save the form with the correct password.",
+        "trouble.2.msg": "\"Could not reach any node of [hosts]. Check host/port/network and the configured local datacenter.\" / \"Timeout connecting to the Cassandra cluster.\"",
+        "trouble.2.fix": "The platform cannot reach the contact points. Review the firewall/security group (step 4), make sure the host is not <code>localhost</code> (it must be reachable from Ruvic, not from your laptop) and that port 9042 is open.",
+        "trouble.3.msg": "The agent lists tables but fails to read one with a data error / permission denied",
+        "trouble.3.fix": "Missing <code>GRANT SELECT</code> on that keyspace. Redo step 3 of \"Vendor / provider setup\" for the relevant keyspace.",
+        "trouble.4.msg": "\"The configured local datacenter does not match\" or <code>DCAwareRoundRobinPolicy</code> errors",
+        "trouble.4.fix": "The \"Local datacenter\" field does not match the cluster's real name. Run <code>nodetool status</code> on a node and use exactly the name shown there, even if the cluster has a single datacenter.",
+        "trouble.5.msg": "Connector shows \"Not configured\" after saving",
+        "trouble.5.fix": "A required field was left empty. Open it again and fill in hosts, port, username, password and local datacenter (all required except timeout).",
+
+        "section.faq_seguridad": "FAQ and security notes",
+        "faq.1.q": "Can the agent modify or delete data?",
+        "faq.1.a": "No. The connector validates in code that every CQL statement starts with SELECT (INSERT, UPDATE, DELETE, CREATE, DROP, ALTER and TRUNCATE are rejected before reaching Cassandra), and the <code>ruvic_reader</code> role only has <code>SELECT</code>. Two independent safeguards.",
+        "faq.2.q": "Where is the password stored?",
+        "faq.2.a": "As a secret in the platform's credential store, tied to your user. The UI never displays it again; it only shows \"set\". To change it, type a new one in the form; to keep it while editing other fields, leave the field empty. The agent's code never hardcodes the password: it always reads it from the <code>RUVIC_CASSANDRA_PASSWORD</code> environment variable.",
+        "faq.3.q": "Credential rotation",
+        "faq.3.a": "Recommended every 90 days or per your policy: change the password in Cassandra (<code>ALTER ROLE ruvic_reader WITH PASSWORD = '...'</code>), update it in the connector form and click <em>Test connection</em>.",
+        "faq.4.q": "What if the password is compromised?",
+        "faq.4.a1": "Change the password in Cassandra immediately (<code>ALTER ROLE ruvic_reader WITH PASSWORD = '...'</code>) or disable the role (<code>ALTER ROLE ruvic_reader WITH LOGIN = false</code>).",
+        "faq.4.a2": "Review the role's recent activity in the cluster's audit logs (if enabled).",
+        "faq.4.a3": "Update the new password in the connector form.",
+        "faq.5.q": "Why does least privilege matter so much for a read-only connector?",
+        "faq.5.a": "Even though the code blocks writes, granting SELECT only on the keyspaces the agent actually needs limits what data is exposed if credentials leak. Avoid granting SELECT on the whole cluster when one or two keyspaces are enough.",
+        "faq.warning_title": "Best practices",
+        "faq.warning_body": "Always use a dedicated, read-only role (never the cassandra role or an application role); restrict network access by IP; grant SELECT only on the keyspaces the agent needs; and never share the password over insecure channels.",
+      },
+    };
+    /* El portal aplica el idioma del usuario (localStorage ruvic-docs-lang)
+       y actualiza [data-i18n], [data-i18n-placeholder] y [data-i18n-alt]. */
+  </script>
+</body>
+</html>
