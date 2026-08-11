@@ -11,6 +11,10 @@ Las credenciales SIEMPRE provienen de variables de entorno RUVIC_CASSANDRA_*
 
 from __future__ import annotations
 
+import base64
+import os
+import tempfile
+from pathlib import Path
 from typing import Any
 
 # cassandra-driver decide su reactor de I/O por defecto al importar
@@ -89,18 +93,33 @@ class CassandraClient:
         self._logger = get_logger()
         self._cluster: Cluster | None = None
         self._session: Session | None = None
+        self._scb_path: Path | None = None
 
     # ------------------------------------------------------------------ #
     # Conexión
     # ------------------------------------------------------------------ #
 
-    def _get_session(self) -> Session:
-        if self._session is not None:
-            return self._session
+    def _build_cluster(self) -> Cluster:
+        if self.config.is_astra:
+            # Astra no expone contact points directos: el bundle trae los
+            # certificados TLS y el endpoint del proxy seguro, y el
+            # usuario/rol se reemplaza por el literal "token".
+            raw_bundle = base64.b64decode(self.config.secure_connect_bundle_b64 or "")
+            fd, tmp_name = tempfile.mkstemp(suffix=".zip")
+            with os.fdopen(fd, "wb") as tmp:
+                tmp.write(raw_bundle)
+            self._scb_path = Path(tmp_name)
+            auth_provider = PlainTextAuthProvider(username="token", password=self.config.token)
+            return Cluster(
+                cloud={"secure_connect_bundle": str(self._scb_path)},
+                auth_provider=auth_provider,
+                connect_timeout=self.config.connect_timeout,
+                connection_class=GeventConnection,
+            )
         auth_provider = PlainTextAuthProvider(
             username=self.config.username, password=self.config.password
         )
-        self._cluster = Cluster(
+        return Cluster(
             contact_points=self.config.hosts,
             port=self.config.port,
             auth_provider=auth_provider,
@@ -111,6 +130,11 @@ class CassandraClient:
             protocol_version=4,
             connection_class=GeventConnection,
         )
+
+    def _get_session(self) -> Session:
+        if self._session is not None:
+            return self._session
+        self._cluster = self._build_cluster()
         try:
             self._session = self._cluster.connect()
         except NoHostAvailable as exc:
@@ -125,9 +149,10 @@ class CassandraClient:
                     "Credenciales inválidas o sin permiso suficiente sobre "
                     "el clúster."
                 ) from exc
+            target = "Astra DB" if self.config.is_astra else str(self.config.hosts)
             raise CassandraNetworkError(
-                f"No se pudo alcanzar ningún nodo de {self.config.hosts}. "
-                "Revisa host/puerto/red y el datacenter local configurado."
+                f"No se pudo alcanzar ningún nodo de {target}. "
+                "Revisa las credenciales/bundle y el datacenter local configurado."
             ) from exc
         except OperationTimedOut as exc:
             raise CassandraNetworkError(
@@ -151,7 +176,8 @@ class CassandraClient:
             raise
         except Exception as exc:  # errores no mapeados del driver
             raise CassandraNetworkError(f"No se pudo conectar: {exc}") from exc
-        self._logger.info("Ping exitoso a Cassandra %s", self.config.hosts)
+        target = "Astra DB" if self.config.is_astra else self.config.hosts
+        self._logger.info("Ping exitoso a Cassandra %s", target)
         return True
 
     # ------------------------------------------------------------------ #

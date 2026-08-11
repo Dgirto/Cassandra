@@ -17,7 +17,8 @@
   "auth_modes": [
     {
       "id": "user_password",
-      "label": "Usuario y contraseña",
+      "label": "Usuario y contraseña (clúster propio)",
+      "help_text": "Para un clúster Cassandra self-hosted alcanzable por IP/host directo (VPN, red privada o IP pública). No aplica a bases de datos administradas como DataStax Astra.",
       "fields": [
         {
           "key": "hosts",
@@ -55,6 +56,35 @@
           "required": true,
           "placeholder": "datacenter1",
           "help_text": "Nombre del datacenter local requerido por el driver (ver nodetool status)"
+        },
+        {
+          "key": "connect_timeout",
+          "label": "Timeout de conexión (segundos)",
+          "type": "number",
+          "required": false,
+          "default": "10"
+        }
+      ]
+    },
+    {
+      "id": "astra",
+      "label": "DataStax Astra DB (cloud)",
+      "help_text": "Para bases de datos administradas en Astra. Astra no expone host:puerto directo, requiere el Secure Connect Bundle y un Application Token.",
+      "fields": [
+        {
+          "key": "secure_connect_bundle_b64",
+          "label": "Secure Connect Bundle (base64)",
+          "type": "textarea",
+          "required": true,
+          "help_text": "Descarga el .zip desde Astra (Database → Connect → Drivers) y codifícalo en base64 antes de pegarlo aquí."
+        },
+        {
+          "key": "token",
+          "label": "Application Token",
+          "type": "password",
+          "secret": true,
+          "required": true,
+          "help_text": "Generado en Astra: Database → Connect → Generate token"
         },
         {
           "key": "connect_timeout",

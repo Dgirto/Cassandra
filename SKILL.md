@@ -20,7 +20,9 @@ Librería Python de solo lectura para Apache Cassandra. Está **preinstalada en 
 
 ## Regla crítica de credenciales
 
-El código generado **NUNCA hardcodea credenciales**. Siempre se leen de variables de entorno, disponibles cuando el conector `cassandra` está configurado:
+El código generado **NUNCA hardcodea credenciales**. Siempre se leen de variables de entorno, disponibles cuando el conector `cassandra` está configurado. Hay dos modos posibles según cómo el usuario configuró el conector — el código nunca necesita saber cuál es, `CassandraClient()` detecta el modo solo:
+
+**Modo directo** (clúster self-hosted):
 
 | Variable | Contenido |
 |----------|-----------|
@@ -29,7 +31,15 @@ El código generado **NUNCA hardcodea credenciales**. Siempre se leen de variabl
 | `RUVIC_CASSANDRA_USERNAME` | Usuario |
 | `RUVIC_CASSANDRA_PASSWORD` | Contraseña |
 | `RUVIC_CASSANDRA_LOCAL_DATACENTER` | Datacenter local requerido por el driver |
-| `RUVIC_CASSANDRA_CONNECT_TIMEOUT` | (opcional) timeout en segundos |
+
+**Modo Astra** (DataStax Astra DB):
+
+| Variable | Contenido |
+|----------|-----------|
+| `RUVIC_CASSANDRA_SECURE_CONNECT_BUNDLE_B64` | Secure Connect Bundle en base64 |
+| `RUVIC_CASSANDRA_TOKEN` | Application Token de Astra |
+
+Común a ambos: `RUVIC_CASSANDRA_CONNECT_TIMEOUT` (opcional, timeout en segundos).
 
 Si estas variables NO existen, el conector no está configurado: no generes código que lo use; indica al usuario que lo configure en **Settings → Conectores**.
 
@@ -92,7 +102,7 @@ except CassandraDataError as e:
 ## Buenas prácticas al generar código
 
 1. Lee credenciales SOLO de las variables `RUVIC_CASSANDRA_*` (el constructor de `CassandraClient` ya lo hace).
-2. Nunca imprimas `RUVIC_CASSANDRA_PASSWORD` en logs ni en la salida.
+2. Nunca imprimas `RUVIC_CASSANDRA_PASSWORD` ni `RUVIC_CASSANDRA_TOKEN` en logs ni en la salida.
 3. La librería es de SOLO LECTURA: no intentes construir CQL con INSERT/UPDATE/DELETE, el conector los rechaza igual.
 4. Usa `limit` razonable en `read_rows` (default 100, máximo 1000) para no traer resultados masivos a memoria.
 5. Cassandra no soporta `JOIN` ni consultas ad-hoc por columnas sin índice secundario o clave de partición — si una consulta falla, revisa el modelo de datos de la tabla antes de reintentar.

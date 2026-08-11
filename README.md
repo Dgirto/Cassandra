@@ -31,7 +31,18 @@ GRANT SELECT ON KEYSPACE ventas TO ruvic_reader;
 - No se otorgan permisos de escritura (`MODIFY`) ni de administración
   (`CREATE`, `ALTER`, `DROP`, `AUTHORIZE`).
 
-## Variables de entorno (`RUVIC_CASSANDRA_*`)
+## Modos de conexión
+
+El conector soporta dos modos (ver `manifest.json` → `auth_modes`). El
+modo se detecta por qué variables llegan llenas: si
+`RUVIC_CASSANDRA_SECURE_CONNECT_BUNDLE_B64` está presente se usa Astra;
+si no, modo directo.
+
+### Modo directo (`user_password`) — clúster self-hosted
+
+Para un clúster alcanzable por host:puerto directo (VPN, red privada, IP
+pública). **No aplica a DataStax Astra ni a otras bases de datos
+administradas** que no exponen contact points directos.
 
 | Variable | Obligatoria | Descripción |
 |----------|-------------|-------------|
@@ -42,9 +53,30 @@ GRANT SELECT ON KEYSPACE ventas TO ruvic_reader;
 | `RUVIC_CASSANDRA_LOCAL_DATACENTER` | Sí | Datacenter local (ver `nodetool status`) |
 | `RUVIC_CASSANDRA_CONNECT_TIMEOUT` | No (default `10`) | Timeout de conexión en segundos |
 
+### Modo Astra (`astra`) — DataStax Astra DB
+
+Astra no expone host:puerto directo; requiere el Secure Connect Bundle
+(certificados TLS + endpoint del proxy) y un Application Token.
+
+| Variable | Obligatoria | Descripción |
+|----------|-------------|-------------|
+| `RUVIC_CASSANDRA_SECURE_CONNECT_BUNDLE_B64` | Sí | El `.zip` descargado en Astra (Database → Connect → Drivers → Download SCB), codificado en base64 |
+| `RUVIC_CASSANDRA_TOKEN` | Sí | Application Token generado en Astra (empieza con `AstraCS:`) |
+| `RUVIC_CASSANDRA_CONNECT_TIMEOUT` | No (default `10`) | Timeout de conexión en segundos |
+
+Para codificar el bundle en base64:
+
+```bash
+# Linux/macOS
+base64 -w0 secure-connect-mi-db.zip > bundle.b64
+
+# PowerShell
+[Convert]::ToBase64String([IO.File]::ReadAllBytes("secure-connect-mi-db.zip")) | Set-Content bundle.b64
+```
+
 ## Pruebas locales
 
-Con Docker (nodo único, autenticación con `PasswordAuthenticator`):
+### Modo directo, con Docker (nodo único, autenticación con `PasswordAuthenticator`):
 
 ```bash
 docker run -d --name cassandra-test \
@@ -77,6 +109,16 @@ Prueba también los casos de error (credenciales incorrectas, tabla
 inexistente, sentencia no-SELECT rechazada) y verifica que los mensajes
 sean claros.
 
+### Modo Astra
+
+```bash
+export RUVIC_CASSANDRA_SECURE_CONNECT_BUNDLE_B64=$(base64 -w0 secure-connect-mi-db.zip)
+export RUVIC_CASSANDRA_TOKEN='AstraCS:...'
+
+python test_connection.py
+python validate_local.py
+```
+
 ## Notas de integración
 
 - `execute_cql` valida a nivel de código que la sentencia empiece con
@@ -87,6 +129,8 @@ sean claros.
   `include_system=True` para verlos.
 - Cassandra requiere un balanceador de carga consciente del datacenter
   (`DCAwareRoundRobinPolicy`); por eso `RUVIC_CASSANDRA_LOCAL_DATACENTER`
-  es obligatorio, aunque el clúster tenga un solo datacenter.
+  es obligatorio en modo directo, aunque el clúster tenga un solo
+  datacenter. En modo Astra esto no aplica: el bundle ya trae la
+  configuración de red del proxy seguro.
 - El driver no soporta `JOIN`; las consultas deben respetar el modelo de
   particionamiento de cada tabla.
