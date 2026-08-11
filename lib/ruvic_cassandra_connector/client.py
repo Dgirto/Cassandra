@@ -13,10 +13,29 @@ from __future__ import annotations
 
 from typing import Any
 
-from cassandra import InvalidRequest, OperationTimedOut, Unauthorized
-from cassandra.auth import PlainTextAuthProvider
-from cassandra.cluster import Cluster, NoHostAvailable, Session
-from cassandra.policies import DCAwareRoundRobinPolicy
+# cassandra-driver decide su reactor de I/O por defecto al importar
+# cassandra.cluster, probando (en orden) gevent, eventlet, la extensión C
+# de libev y asyncore. Desde Python 3.12 asyncore ya no existe en el
+# stdlib y libev requiere un compilador C, así que en cualquier entorno
+# moderno sin build tools la importación falla salvo que gevent ya esté
+# parcheado — por eso el patch va antes de tocar el paquete cassandra.
+from gevent import monkey  # type: ignore[import-untyped]
+
+monkey.patch_all()
+
+from cassandra import (  # type: ignore[import-untyped]
+    InvalidRequest,
+    OperationTimedOut,
+    Unauthorized,
+)
+from cassandra.auth import PlainTextAuthProvider  # type: ignore[import-untyped]
+from cassandra.cluster import (  # type: ignore[import-untyped]
+    Cluster,
+    NoHostAvailable,
+    Session,
+)
+from cassandra.io.geventreactor import GeventConnection  # type: ignore[import-untyped]
+from cassandra.policies import DCAwareRoundRobinPolicy  # type: ignore[import-untyped]
 
 from .config import CassandraConfig
 from .exceptions import (
@@ -90,12 +109,18 @@ class CassandraClient:
             ),
             connect_timeout=self.config.connect_timeout,
             protocol_version=4,
+            connection_class=GeventConnection,
         )
         try:
             self._session = self._cluster.connect()
         except NoHostAvailable as exc:
             errors = getattr(exc, "errors", {}) or {}
-            if any(isinstance(e, Unauthorized) for e in errors.values()):
+            # exc.errors normalmente es un dict {host: excepción}, pero
+            # cuando la política de balanceo descarta todos los hosts antes
+            # de intentar conectar (ej. local_datacenter que no existe en
+            # el clúster), el driver lo entrega como lista, no como dict.
+            error_values = errors.values() if isinstance(errors, dict) else errors
+            if any(isinstance(e, Unauthorized) for e in error_values):
                 raise CassandraAuthError(
                     "Credenciales inválidas o sin permiso suficiente sobre "
                     "el clúster."
